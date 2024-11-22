@@ -1,4 +1,3 @@
-// Required dependencies
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -11,9 +10,27 @@ app.use(cors());
 app.use(express.json());
 
 // MongoDB connection
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/dictionary', {
+mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/herero_dictionary', {
     useNewUrlParser: true,
     useUnifiedTopology: true
+});
+
+// Definition Schema (Sub-document)
+const definitionSchema = new mongoose.Schema({
+    type: {
+        type: String,
+        required: true,
+        trim: true
+    },
+    definition: {
+        type: String,
+        required: true,
+        trim: true
+    },
+    example: {
+        type: String,
+        trim: true
+    }
 });
 
 // Word Schema
@@ -24,21 +41,12 @@ const wordSchema = new mongoose.Schema({
         unique: true,
         trim: true
     },
-    definition: {
-        type: String,
-        required: true
-    },
-    partOfSpeech: {
+    pronunciation: {
         type: String,
         required: true,
-        enum: ['noun', 'verb', 'adjective', 'adverb', 'pronoun', 'preposition', 'conjunction', 'interjection']
+        trim: true
     },
-    example: {
-        type: String
-    },
-    etymology: {
-        type: String
-    },
+    definitions: [definitionSchema],
     dateAdded: {
         type: Date,
         default: Date.now
@@ -93,7 +101,11 @@ app.get('/api/words/search', async (req, res) => {
         }
 
         const words = await Word.find({
-            word: { $regex: searchTerm, $options: 'i' }
+            $or: [
+                { word: { $regex: searchTerm, $options: 'i' } },
+                { 'definitions.definition': { $regex: searchTerm, $options: 'i' } },
+                { 'definitions.example': { $regex: searchTerm, $options: 'i' } }
+            ]
         }).limit(10);
 
         res.json(words);
@@ -118,7 +130,14 @@ app.get('/api/words/:word', async (req, res) => {
 // POST new word
 app.post('/api/words', async (req, res) => {
     try {
-        const { word, definition, partOfSpeech, example, etymology } = req.body;
+        const { word, pronunciation, definitions } = req.body;
+
+        // Validate required fields
+        if (!word || !pronunciation || !definitions || definitions.length === 0) {
+            return res.status(400).json({ 
+                message: 'Word, pronunciation, and at least one definition are required' 
+            });
+        }
 
         // Check if word already exists
         const existingWord = await Word.findOne({ word: word.toLowerCase() });
@@ -128,10 +147,8 @@ app.post('/api/words', async (req, res) => {
 
         const newWord = new Word({
             word: word.toLowerCase(),
-            definition,
-            partOfSpeech,
-            example,
-            etymology
+            pronunciation,
+            definitions
         });
 
         const savedWord = await newWord.save();
@@ -144,9 +161,23 @@ app.post('/api/words', async (req, res) => {
 // PUT update word
 app.put('/api/words/:word', async (req, res) => {
     try {
+        const { word, pronunciation, definitions } = req.body;
+
+        // Validate required fields
+        if (!word || !pronunciation || !definitions || definitions.length === 0) {
+            return res.status(400).json({ 
+                message: 'Word, pronunciation, and at least one definition are required' 
+            });
+        }
+
         const updatedWord = await Word.findOneAndUpdate(
             { word: req.params.word.toLowerCase() },
-            { ...req.body, lastModified: Date.now() },
+            { 
+                word: word.toLowerCase(),
+                pronunciation,
+                definitions,
+                lastModified: Date.now()
+            },
             { new: true, runValidators: true }
         );
 
